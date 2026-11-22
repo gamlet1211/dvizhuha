@@ -130,7 +130,7 @@ input,select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.
 
 <div id="content">
   <!-- ГЛАВНОЕ МЕНЮ -->
-  <section class="screen" id="scr-menu">
+  <section class="screen"  id="scr-menu">>
     <div class="logo">ДВИЖУХА</div>
     <div class="sub">карточная игра для компании</div>
     <button class="btnBig" id="mPlay">🎮 Играть</button>
@@ -146,7 +146,7 @@ input,select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.
     <h2 style="text-align:center;margin-top:40px">Добро пожаловать в Движуху!</h2>
     <div class="card" style="max-width:420px;margin:20px auto">
       <button class="btnBig" id="btnGoogle" style="background:#fff;color:#333">🔑 Войти через Google</button>
-      <div id="authStatus" style="text-align:center;color:#e8b64c;min-height:22px;margin-top:14px;font-size:14px"></div>
+      <div id="authStatus" style="text-align:center;color:#ffb84d;margin-top:12px;font-size:14px;min-height:18px"></div>
     </div>
   </section>
 
@@ -296,14 +296,13 @@ input,select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.
   1. Создайте бесплатный проект на <b>console.firebase.google.com</b><br>
   2. Включите <b>Authentication → Google</b> и добавьте свой домен<br>
   3. Скопируйте конфиг проекта и вставьте в константу <b>FIREBASE_CONFIG</b> в начале скрипта<br>
-  4. Обновите страницу — теперь кнопка откроет окно входа Google и создаст ваш профиль.<br><br>
-  Прогресс сохраняется за вашим аккаунтом на любом устройстве.</div><button class="btnSmall" id="fbOk" style="margin-top:10px">Понятно</button></div>
+  4. Добавьте в &lt;head&gt;: скрипты firebase-app.js и firebase-auth.js<br><br>
+  После этого вход заработает автоматически. Статус входа виден на экране под кнопкой.</div><button class="btnSmall" id="fbOk" style="margin-top:10px">Понятно</button></div>
 <div class="overlay" id="ovExit"><h3>Выйти из партии?</h3><div style="display:flex;gap:10px"><button class="btnSmall on" id="exitYes">Да, выйти</button><button class="btnSmall" id="exitNo">Остаться</button></div></div>
 
 <script>
 /* ========= КОНФИГ FIREBASE (заполните для входа через Google) ========= */
 const FIREBASE_CONFIG={apiKey:"",authDomain:"",projectId:""};
-window.addEventListener('error',function(e){try{const el=document.getElementById('authStatus');if(el&&!el.textContent)el.textContent='Ошибка: '+e.message;}catch(x){}});
 
 /* ========= ДАННЫЕ ========= */
 const COLORS={R:'#e8433f',Y:'#f4c430',G:'#3aa54a',B:'#2e6fd6'};
@@ -346,8 +345,9 @@ function svgCard(c){c._id=++_cid;return cardSvg(c);}
 /* ========= ПРОФИЛЬ ========= */
 function defaultProf(){return{name:'',guest:true,coins:0,tpoints:0,xp:0,level:1,wins:0,loss:0,streak:0,avatar:'a0',deck:'d0',owned:['a0','d0'],registered:false};}
 let P=null;
-function loadP(){try{P=JSON.parse(localStorage.getItem('dvz_prof'))}catch(e){P=null}}
+function loadP(){try{P=JSON.parse(localStorage.getItem('dvz_prof'))}catch(e){P=null}if(P&&!P.uid)P=null}
 function saveP(){if(P)localStorage.setItem('dvz_prof',JSON.stringify(P))}
+loadP();
 
 /* ========= ЭКРАНЫ ========= */
 let CUR='menu';
@@ -397,38 +397,53 @@ document.getElementById('mProfile').onclick=()=>{renderProfile();show('profile')
 document.getElementById('mRules').onclick=()=>{renderRulesPreview();show('rules')};
 document.getElementById('btnShop').onclick=()=>{renderShop();show('shop')};
 
-/* ========= ВХОД ЧЕРЕЗ GOOGLE ========= */
-function authStatus(m){const el=document.getElementById('authStatus');if(el)el.textContent=m;}
-let AUTH_READY=false;
-function loadProf(u){
-  let p=null;
-  try{p=JSON.parse(localStorage.getItem('dvz_prof_'+u.uid))}catch(e){p=null}
-  if(!p||!p.owned)p=defaultProf();
-  p.guest=false;p.name=u.displayName||p.name||'Игрок';
-  return p;
-}
-function initFB(){
-  if(AUTH_READY)return;
-  if(typeof firebase==='undefined')return;
-  firebase.initializeApp(FIREBASE_CONFIG);
-  AUTH_READY=true;
-  firebase.auth().onAuthStateChanged(u=>{
-    if(u){P=loadProf(u);saveP();renderProfile();renderPanel();show('menu');}
-  });
-}
+/* ========= ВХОД ========= */
+const authStatus=document.getElementById('authStatus');
+function setStatus(t){authStatus.textContent=t;}
 document.getElementById('btnGoogle').onclick=()=>{
-  if(!FIREBASE_CONFIG.apiKey||!FIREBASE_CONFIG.projectId){
-    authStatus('Сначала заполните FIREBASE_CONFIG в начале скрипта — см. инструкцию');
+  if(!FIREBASE_CONFIG.apiKey){
+    setStatus('Вход не настроен: заполните FIREBASE_CONFIG в начале скрипта — открываю инструкцию');
     document.getElementById('ovFB').classList.add('show');return;
   }
-  if(typeof firebase==='undefined'){authStatus('Firebase не загрузился — проверьте интернет и обновите страницу');return;}
-  initFB();
-  if(!AUTH_READY){authStatus('Firebase не загрузился — проверьте интернет и обновите страницу');return;}
-  authStatus('Открываю окно Google…');
-  const prov=new firebase.auth.GoogleAuthProvider();
-  firebase.auth().signInWithPopup(prov).catch(e=>{authStatus('Ошибка входа: '+((e&&e.code)||e.message||e));});
+  if(typeof firebase==='undefined'){setStatus('Не удалось загрузить Firebase — проверьте интернет и обновите страницу');return;}
+  try{
+    if(!window._dAuth)window._dAuth=firebase.auth();
+    const prov=new firebase.auth.GoogleAuthProvider();
+    setStatus('Открываю окно Google...');
+    window._dAuth.signInWithPopup(prov).catch(function(err){
+      if(err&&err.code==='auth/popup-blocked'){
+        setStatus('Всплывающее окно заблокировано браузером — переключаюсь на переход страницы...');
+        window._dAuth.signInWithRedirect(prov).catch(function(e){setStatus('Ошибка: '+e.message);});
+        return;
+      }
+      if(err&&err.code==='auth/popup-closed-by-user'){setStatus('Окно закрыто — нажмите кнопку ещё раз');return;}
+      if(err&&err.code==='auth/unauthorized-domain'){setStatus('Этот домен не добавлен в Firebase: Authentication → Settings → Authorized domains');return;}
+      if(err&&err.code==='auth/operation-not-supported-in-this-environment'){setStatus('Откройте игру по ссылке https (например, с GitHub Pages), а не с диска');return;}
+      setStatus('Ошибка: '+((err&&err.message)||err));
+    });
+  }catch(e){setStatus('Ошибка: '+e.message);}
 };
 document.getElementById('fbOk').onclick=()=>document.getElementById('ovFB').classList.remove('show');
+if(typeof firebase!=='undefined'&&FIREBASE_CONFIG.apiKey){
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    window._dAuth=firebase.auth();
+    window._dAuth.onAuthStateChanged(function(u){
+      if(u){
+        loadP();
+        if(!P)P=defaultProf();
+        P.uid=u.uid;P.guest=false;
+        if(!P.name)P.name=u.displayName||('Игрок'+u.uid.slice(0,4));
+        P.email=u.email||'';
+        saveP();renderPanel();show('menu');setStatus('');
+      }else{
+        P=null;localStorage.removeItem('dvz_prof');renderPanel();show('auth');
+      }
+    });
+  }catch(e){setStatus('Ошибка Firebase: '+e.message);}
+}else{
+  setStatus('Вход не настроен: заполните FIREBASE_CONFIG в начале скрипта');
+}
 
 /* ========= ПРОФИЛЬ ========= */
 function renderProfile(){
@@ -445,10 +460,7 @@ function renderProfile(){
   document.getElementById('pTP').textContent=P.tpoints;
 }
 document.getElementById('btnSaveName').onclick=()=>{const v=document.getElementById('profNameInput').value.trim();if(v){P.name=v;saveP();renderProfile();renderPanel();}};
-document.getElementById('btnLogout').onclick=()=>{
-  if(AUTH_READY){try{firebase.auth().signOut()}catch(e){}}
-  P=null;show('auth');renderPanel();
-};
+document.getElementById('btnLogout').onclick=()=>{if(typeof firebase!=='undefined'&&window._dAuth){window._dAuth.signOut();}P=null;localStorage.removeItem('dvz_prof');show('auth');renderPanel();};
 
 /* ========= НОВОСТИ ========= */
 function renderNews(){
@@ -690,8 +702,8 @@ function buildView(pi){
 function renderFromView(v){
   if(!v)return;
   const isHot=G&&G.mode==='hotseat';
-  document.getElementById('turnMsg').textContent=v.over?'':(v.yourTurn?'Ваш ход, '+(isHot?G.players[G.turn].name:P?P.name:'Игрок'):'Ход: '+v.turnName);
-  if(isHot&&!v.yourTurn&&!v.over){document.getElementById('hotPassName').textContent='Ход передаётся: '+v.turnName;document.getElementById('ovHotPass').classList.add('show');}
+  document.getElementById('turnMsg').textContent=v.over?'':(v.yourTurn?'Ваш ход, '+(isHot?G.players[G.turn].name:(P?P.name:'Игрок')):'Ход: '+v.turnName);
+  if(isHot&&!v.yourTurn&&!v.over){const tn=G.players[G.turn].name;if(window.hotShown!==tn){window.hotShown=tn;document.getElementById('hotPassName').textContent='Ход передаётся: '+tn;document.getElementById('ovHotPass').classList.add('show');}}else{window.hotShown=null;}
   const or=document.getElementById('oppRow');or.innerHTML='';
   v.players.forEach(p=>{
     const d=document.createElement('div');d.className='opp'+(p.active?' active':'');
@@ -780,7 +792,6 @@ document.getElementById('netCreate').onclick=()=>{
   NETCODE='';const ab='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';for(let i=0;i<6;i++)NETCODE+=ab[Math.floor(Math.random()*ab.length)];
   IS_HOST=true;MYIDX=0;
   document.getElementById('netStatus').textContent='Создаю комнату...';
-  if(typeof Peer==='undefined'){document.getElementById('netStatus').textContent='Нет соединения с сетью — обновите страницу';return;}
   PEER=new Peer('dvz-'+NETCODE);
   PEER.on('open',()=>{
     document.getElementById('netStatus').textContent='Комната готова!';
@@ -843,7 +854,6 @@ document.getElementById('netJoin').onclick=()=>{
   if(code.length!==6){document.getElementById('netStatus').textContent='Код из 6 символов!';return;}
   IS_HOST=false;MYIDX=-1;
   document.getElementById('netStatus').textContent='Подключаюсь...';
-  if(typeof Peer==='undefined'){document.getElementById('netStatus').textContent='Нет соединения с сетью — обновите страницу';return;}
   PEER=new Peer();
   PEER.on('open',()=>{
     const conn=PEER.connect('dvz-'+code);
@@ -899,8 +909,8 @@ function sendChat(){
   inp.value='';
   if(G&&G.mode==='net'){
     const name=IS_HOST?(P?P.name:'Хост'):LOCALNAME;
-    if(IS_HOST)chatMsg(name,msg);
-    netSend({t:'chat',name:IS_HOST?name:LOCALNAME,msg:msg});
+    chatMsg(name,msg);
+    netSend({t:'chat',name:name,msg:msg});
   }
 }
 let LOCALNAME='Игрок';
@@ -930,8 +940,7 @@ document.getElementById('exitYes').onclick=()=>{
 document.getElementById('exitNo').onclick=()=>document.getElementById('ovExit').classList.remove('show');
 
 /* ========= СТАРТ ========= */
-if(FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.projectId)initFB();
-show('auth');
+if(P){renderPanel();show('menu');}else show('auth');
 </script>
 </body>
 </html>
