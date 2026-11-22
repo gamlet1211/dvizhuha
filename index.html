@@ -130,7 +130,7 @@ input,select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.
 
 <div id="content">
   <!-- ГЛАВНОЕ МЕНЮ -->
-  <section class="screen"  id="scr-menu">>
+  <section class="screen"  id="scr-menu">
     <div class="logo">ДВИЖУХА</div>
     <div class="sub">карточная игра для компании</div>
     <button class="btnBig" id="mPlay">🎮 Играть</button>
@@ -534,11 +534,11 @@ function buildDeck(){
 }
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function nextIdx(i){return (i+G.dir+G.players.length)%G.players.length;}
-function top(){return G.discard[G.discard.length-1];}
+function topCard(){return G.discard[G.discard.length-1];}
 function canPlay(c){
   if(G.pending>0){if(G.pendingType==='d4')return c.v==='d4';if(G.pendingType==='d2')return c.v==='d2';return false;}
   if(c.c==='W')return true;
-  return c.c===G.color||c.v===top().v;
+  return c.c===G.color||c.v===topCard().v;
 }
 function newGame(mode,infos){
   G={mode,players:[],deck:shuffle(buildDeck()),discard:[],dir:1,turn:0,pending:0,pendingType:null,color:null,skipNext:false,over:false,winner:-1,tournament:T&&mode==='tournament'};
@@ -552,7 +552,7 @@ function newGame(mode,infos){
 function drawN(pi,n){
   const p=G.players[pi];
   for(let i=0;i<n;i++){
-    if(!G.deck.length){const t=top();G.deck=shuffle(G.discard.slice(0,-1));G.discard=[t];}
+    if(!G.deck.length){const t=topCard();G.deck=shuffle(G.discard.slice(0,-1));G.discard=[t];}
     if(G.deck.length)p.hand.push(G.deck.pop());
   }
 }
