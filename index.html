@@ -578,7 +578,7 @@ function playCard(pi,idx){
   else if(c.v==='tr'){G.awaitTarget={pi};}
   else applyEffect(c);
   if(!p.hand.length){endGame(pi);return true;}
-  if(G.awaitColor||G.awaitTarget){renderGame();return true;}
+  if(G.awaitColor||G.awaitTarget){renderGame();maybeBot();return true;}
   advance();return true;
 }
 function chooseColor(c){
@@ -634,7 +634,7 @@ function botMove(){
   }
   let idx=p.hand.findIndex(c=>canPlay(c)&&c.c!=='W');
   if(idx<0)idx=p.hand.findIndex(c=>canPlay(c));
-  if(idx>=0){playCard(pi,idx);return;}
+  if(idx>=0){ if(G.awaitColor||G.awaitTarget){renderGame();return true;}(pi,idx);return;}
   drawAction(pi);
 }
 
@@ -676,7 +676,7 @@ function autoPlay(pi){
   else{
     let idx=p.hand.findIndex(c=>canPlay(c)&&c.c!=='W');
     if(idx<0)idx=p.hand.findIndex(c=>canPlay(c));
-    if(idx>=0)playCard(pi,idx);
+    if(idx>=0) if(G.awaitColor||G.awaitTarget){renderGame();return true;}(pi,idx);
     else drawAction(pi);
   }
   if(G&&G.mode==='net'&&IS_HOST)pushState();
@@ -734,6 +734,7 @@ function renderGame(){
   const view=buildView(currentViewIdx());
   renderFromView(view);
   startTurnTimer();
+  if(G.mode==='net'&&IS_HOST)pushState();
 }
 function currentViewIdx(){
   if(G.mode==='hotseat')return hotViewer;
@@ -793,32 +794,32 @@ function renderFromView(v){
   else document.getElementById('ovColor').classList.remove('show');
   if(v.awaitTarget){
     const tl=document.getElementById('targetList');tl.innerHTML='';
-    const myIdx=currentViewIdx();
+    const myIdx=(v._myi!==undefined)?v._myi:(G?currentViewIdx():-1);
     v.players.forEach((p,i)=>{
       if(i===myIdx)return;
       const b=document.createElement('button');b.className='tbtn';b.textContent=p.name+' ('+p.count+' карт)';
-      b.onclick=()=>{document.getElementById('ovTarget').classList.remove('show');if(G.mode==='net')netSend({t:'target',pi:i});else chooseTarget(i);};
+      b.onclick=()=>{document.getElementById('ovTarget').classList.remove('show');if(NET_ACTIVE&&!IS_HOST)netSend({t:'target',pi:i});else chooseTarget(i);};
       tl.appendChild(b);
     });
     document.getElementById('ovTarget').classList.add('show');
   } else document.getElementById('ovTarget').classList.remove('show');
 }
 function doPlay(idx){
-  if(G.mode==='net'){netSend({t:'play',idx});return;}
+  if(NET_ACTIVE&&!IS_HOST){netSend({t:'play',idx});return;}
   if(G.awaitColor||G.awaitTarget)return;
   const ok=playCard(MYIDX_LOCAL(),idx);
   if(!ok)document.getElementById('logMsg').textContent='Эта карта не подходит!';
 }
 function MYIDX_LOCAL(){return G.mode==='hotseat'?G.turn:G.players.findIndex(p=>!p.bot&&(!p.netId||p.netId==='host'));}
 function doDraw(){
-  if(G.mode==='net'){netSend({t:'draw'});return;}
+  if(NET_ACTIVE&&!IS_HOST){netSend({t:'draw'});return;}
   drawAction(MYIDX_LOCAL());
 }
 document.getElementById('btnDraw').onclick=doDraw;
-document.getElementById('btnKeep').onclick=()=>{if(G.mode==='net'){netSend({t:'pass'});return;}stopTurnTimer();advance();};
+document.getElementById('btnKeep').onclick=()=>{if(NET_ACTIVE&&!IS_HOST){netSend({t:'pass'});return;}stopTurnTimer();advance();};
 document.querySelectorAll('#ovColor .cbtn').forEach(b=>b.onclick=()=>{
   document.getElementById('ovColor').classList.remove('show');
-  if(G.mode==='net')netSend({t:'color',c:b.dataset.c});else chooseColor(b.dataset.c);
+   if(NET_ACTIVE&&!IS_HOST)netSend({t:'color',c:b.dataset.c});else chooseColor(b.dataset.c);
 });
 
 
@@ -844,6 +845,7 @@ document.getElementById('hotReady').onclick=()=>{document.getElementById('ovHotP
 
 /* ========= СЕТЬ (PeerJS) ========= */
 let PEER=null,CONNS=[],MYIDX=-1,IS_HOST=false,NETCODE='';
+let NET_ACTIVE=false;
 function netSend(obj){if(PEER&&IS_HOST){CONNS.forEach(c=>{try{c.send(obj)}catch(e){}});}else if(PEER&&PEER.conn){try{PEER.conn.send(obj)}catch(e){}}}
 document.getElementById('pmNet').onclick=()=>{show('net');};
 document.getElementById('netCode').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(NETCODE);};
@@ -879,8 +881,10 @@ document.getElementById('netAddBot').onclick=()=>{
 document.getElementById('netStart').onclick=()=>{
   if(NETPLAYERS.length<2)return;
   newGame('net',NETPLAYERS);
+  NET_ACTIVE=true;
   broadcastLobbyStart();
   show('game');renderGame();maybeBot();
+  pushState();
   addSysChat('Партия началась! Удачи 🎉');
 };
 function broadcastLobbyStart(){
@@ -894,7 +898,7 @@ function hostOnData(conn,d){
   const pi=G.players.findIndex(p=>p.netId===conn.peer);
   if(pi<0)return;
   if(G.turn!==pi)return;
-  if(d.t==='play'){const c=G.players[pi].hand[d.idx];if(c&&canPlay(c)){playCard(pi,d.idx);pushState();}}
+  if(d.t==='play'){const c=G.players[pi].hand[d.idx];if(c&&canPlay(c)){ if(G.awaitColor||G.awaitTarget){renderGame();return true;}(pi,d.idx);pushState();}}
   else if(d.t==='draw'){drawAction(pi);pushState();}
   else if(d.t==='pass'){advance();pushState();}
   else if(d.t==='color'&&G.awaitColor&&G.awaitColor.pi===pi){chooseColor(d.c);pushState();}
@@ -912,6 +916,7 @@ document.getElementById('netJoin').onclick=()=>{
   const nm=(document.getElementById('netJoinName').value||P&&P.name||'Игрок').slice(0,16);
   if(code.length!==6){document.getElementById('netStatus').textContent='Код из 6 символов!';return;}
   IS_HOST=false;MYIDX=-1;
+  LOCALNAME=nm;
   document.getElementById('netStatus').textContent='Подключаюсь...';
   PEER=new Peer();
   PEER.on('open',()=>{
@@ -919,6 +924,7 @@ document.getElementById('netJoin').onclick=()=>{
     PEER.conn=conn;
     conn.on('open',()=>{conn.send({t:'join',name:nm});document.getElementById('netStatus').textContent='Подключено!';});
     conn.on('data',d=>clientOnData(d));
+    NET_ACTIVE=false;
     conn.on('close',()=>{document.getElementById('netStatus').textContent='Соединение потеряно';G=null;show('menu');});
   });
   PEER.on('error',e=>{document.getElementById('netStatus').textContent='Не удалось подключиться ('+e.type+')';});
@@ -926,7 +932,7 @@ document.getElementById('netJoin').onclick=()=>{
 function clientOnData(d){
   if(!d)return;
   if(d.t==='joined'){/* ждём start */}
-  else if(d.t==='start'){MYIDX=d.idx;show('game');}
+  else if(d.t==='start'){MYIDX=d.idx;NET_ACTIVE=true;show('game');}
   else if(d.t==='state'){MYIDX=d.v._myi!==undefined?d.v._myi:MYIDX;renderFromView(d.v);}
   else if(d.t==='chat'){chatMsg(d.name,d.msg);}
   else if(d.t==='sys'){addSysChat(d.msg);}
@@ -966,7 +972,7 @@ document.getElementById('chatInput').addEventListener('keydown',e=>{if(e.key==='
 function sendChat(){
   const inp=document.getElementById('chatInput');const msg=inp.value.trim();if(!msg)return;
   inp.value='';
-  if(G&&G.mode==='net'){
+  if(NET_ACTIVE){
     const name=IS_HOST?(P?P.name:'Хост'):LOCALNAME;
     chatMsg(name,msg);
     netSend({t:'chat',name:name,msg:msg});
@@ -994,6 +1000,7 @@ let LOCALNAME='Игрок';
 document.getElementById('exitYes').onclick=()=>{
   document.getElementById('ovExit').classList.remove('show');
   if(PEER){try{PEER.destroy()}catch(e){}}PEER=null;CONNS=[];G=null;
+  NET_ACTIVE=false;
   show('menu');
 };
 document.getElementById('exitNo').onclick=()=>document.getElementById('ovExit').classList.remove('show');
