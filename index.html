@@ -270,6 +270,7 @@ input,select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.
       <div id="handWrap"></div>
       <div id="gameBar">
         <div id="colorNow"></div>
+        <div class="pill" id="turnTimer" style="display:none">⏱ 20 </div>
         <button class="btnSmall warn" id="btnDraw">Взять карту</button>
         <button class="btnSmall" id="btnKeep">Пропустить</button>
       </div>
@@ -524,6 +525,10 @@ document.getElementById('tPlay').onclick=()=>{
 
 /* ========= ИГРА: ЯДРО ========= */
 let G=null,T=null;
+let hotViewer=0;
+const TURN_SECONDS=30;
+let turnTimer=null,turnLeft=0;
+
 function buildDeck(){
   const d=[];const cs=['R','Y','G','B'];
   cs.forEach(c=>{d.push({c,v:'0'});
@@ -541,13 +546,14 @@ function canPlay(c){
   return c.c===G.color||c.v===topCard().v;
 }
 function newGame(mode,infos){
-  G={mode,players:[],deck:shuffle(buildDeck()),discard:[],dir:1,turn:0,pending:0,pendingType:null,color:null,skipNext:false,over:false,winner:-1,tournament:T&&mode==='tournament'};
+  G={mode,players:[],deck:shuffle(buildDeck()),discard:[],dir:1,turn:0,pending:0,pendingType:null,color:null,skipNext:false,over:false,winner:-1,phase:'turn',tournament:T&&mode==='tournament'};
   infos.forEach((inf,i)=>G.players.push({name:inf.name,bot:!!inf.bot,netId:inf.netId||null,hand:[]}));
   for(let r=0;r<7;r++)G.players.forEach(p=>p.hand.push(G.deck.pop()));
   let t=G.deck.pop();
   while(t.c==='W'){G.deck.unshift(t);t=G.deck.pop();}
   G.discard.push(t);G.color=t.c;
   G.turn=Math.floor(Math.random()*G.players.length);
+  hotViewer=0;
 }
 function drawN(pi,n){
   const p=G.players[pi];
@@ -556,7 +562,6 @@ function drawN(pi,n){
     if(G.deck.length)p.hand.push(G.deck.pop());
   }
 }
-function humanIdx(){return G.mode==='hotseat'?G.turn:G.players.findIndex(p=>!p.bot&&(!p.netId||p.netId==='host'));}
 function applyEffect(c){
   if(c.v==='skip')G.skipNext=true;
   else if(c.v==='rev'){G.dir*=-1;if(G.players.length===2)G.skipNext=true;}
@@ -565,10 +570,10 @@ function applyEffect(c){
 }
 function playCard(pi,idx){
   const p=G.players[pi];const c=p.hand[idx];
-  if(!canPlay(c))return false;
+  if(!c||!canPlay(c))return false;
   p.hand.splice(idx,1);G.discard.push(c);
   G.color=c.c==='W'?G.color:c.c;
-  G.log=(p.name)+': '+(c.c==='W'?(c.v==='d4'?'+4':'цвет'):c.v==='skip'?'пропуск':c.v==='rev'?'смена хода':c.v==='d2'?'+2':c.v==='tr'?'передача хода':c.v);
+  G.log=p.name+': '+(c.c==='W'?(c.v==='d4'?'+4':'цвет'):c.v==='skip'?'пропуск':c.v==='rev'?'смена хода':c.v==='d2'?'+2':c.v==='tr'?'передача хода':c.v);
   if(c.v==='wild'||c.v==='d4'){G.awaitColor={pi};if(c.v==='d4')applyEffect(c);}
   else if(c.v==='tr'){G.awaitTarget={pi};}
   else applyEffect(c);
@@ -586,18 +591,17 @@ function chooseTarget(ti){
   if(!G.awaitTarget)return;
   const pi=G.awaitTarget.pi;G.awaitTarget=null;
   G.log=G.players[pi].name+' передал ход → '+G.players[ti].name;
-  G.turn=ti;G.phase='turn';renderGame();maybeBot();
+  G.turn=ti;G.phase='turn';
+  renderGame();maybeBot();
 }
 function advance(){
   if(G.over)return;
+  stopTurnTimer();
   let t=G.turn;
   if(G.skipNext){t=nextIdx(t);G.skipNext=false;G.log+=' — следующий пропускает!';}
   t=nextIdx(t);
   G.turn=t;G.phase='turn';
   renderGame();maybeBot();
-}
-function respondPending(pi,take){
-  // игрок pi наpending: take=false значит только что сыграл карту (advance уже вызван)
 }
 function drawAction(pi){
   const p=G.players[pi];
@@ -615,13 +619,14 @@ function drawAction(pi){
 function maybeBot(){
   if(G.over)return;
   const p=G.players[G.turn];
-  if(!p.bot)return;
+  if(!p||!p.bot)return;
+  stopTurnTimer();
   setTimeout(botMove,900);
 }
 function botMove(){
   if(G.over)return;
   const pi=G.turn,p=G.players[pi];
-  if(G.awaitColor){const cnt={R:0,Y:0,G:0,B:0};p.hand.forEach(c=>{if(c.c!=='W')cnt[c.c]++});const best=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];chooseColor(best);return;}
+  if(G.awaitColor){const cnt={R:0,Y:0,G:0,B:0};p.hand.forEach(c=>{if(c.c!=='W')cnt[c.c]++});chooseColor(Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]);return;}
   if(G.awaitTarget){
     let best=-1,bc=99;
     G.players.forEach((q,i)=>{if(i!==pi&&q.hand.length<bc){bc=q.hand.length;best=i;}});
@@ -632,7 +637,53 @@ function botMove(){
   if(idx>=0){playCard(pi,idx);return;}
   drawAction(pi);
 }
+
+/* ========= ТАЙМЕР ХОДА ========= */
+function updateTimerUI(){
+  const el=document.getElementById('turnTimer');
+  if(!el)return;
+  if(turnTimer){el.style.display='inline-block';el.textContent='⏱ '+turnLeft;}
+  else el.style.display='none';
+}
+function stopTurnTimer(){
+  if(turnTimer){clearInterval(turnTimer);turnTimer=null;updateTimerUI();}
+}
+function startTurnTimer(){
+  stopTurnTimer();
+  if(!G||G.over)return;
+  if(G.mode==='net'&&!IS_HOST)return;
+  const p=G.players[G.turn];
+  if(!p||p.bot)return;
+  if(G.mode==='hotseat'&&document.getElementById('ovHotPass').classList.contains('show'))return;
+  turnLeft=TURN_SECONDS;
+  updateTimerUI();
+  turnTimer=setInterval(()=>{
+    if(!G||G.over){stopTurnTimer();return;}
+    turnLeft--;
+    updateTimerUI();
+    if(turnLeft<=0){stopTurnTimer();autoPlay(G.turn);}
+  },1000);
+}
+function autoPlay(pi){
+  if(!G||G.over||G.turn!==pi)return;
+  const p=G.players[pi];
+  if(G.awaitColor){const cnt={R:0,Y:0,G:0,B:0};p.hand.forEach(c=>{if(c.c!=='W')cnt[c.c]++});chooseColor(Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]);}
+  else if(G.awaitTarget){
+    let best=-1,bc=99;
+    G.players.forEach((q,i)=>{if(i!==pi&&q.hand.length<bc){bc=q.hand.length;best=i;}});
+    chooseTarget(best<0?(pi+1)%G.players.length:best);
+  }
+  else{
+    let idx=p.hand.findIndex(c=>canPlay(c)&&c.c!=='W');
+    if(idx<0)idx=p.hand.findIndex(c=>canPlay(c));
+    if(idx>=0)playCard(pi,idx);
+    else drawAction(pi);
+  }
+  if(G&&G.mode==='net'&&IS_HOST)pushState();
+}
+
 function endGame(wi){
+  stopTurnTimer();
   G.over=true;G.winner=wi;
   if(G.mode==='net'){broadcastEnd(wi);return;}
   finishGame(wi);
@@ -644,12 +695,11 @@ function finishGame(wi){
   if(P){
     if(won){P.wins++;P.streak++;const rew=100+10*opp;P.coins+=rew;P.xp+=50+opp;addLevel();if(G.tournament)T.score+=50+5*opp;}
     else{P.loss++;P.streak=0;P.coins+=25;P.xp+=10;addLevel();if(G.tournament)T.score+=5;}
-    if(G.mode==='hotseat'&&G.players[G.turn===wi?wi:0]&&G.players[0].name){/* hotseat: награда текущему профилю за игрока1 */}
     saveP();renderPanel();
   }
   const et=document.getElementById('endTitle');
   et.textContent=won?'🏆 Победа!':'Поражение';
-  document.getElementById('endReward').innerHTML=won?'🪙 +'+(100+10*opp)+' монет · ⭐ +'+(50+opp)+' XP'+(P.streak>1?'<br>🔥 Серия побед: '+P.streak+' (бонус +'+(20*P.streak)+')':''):(P?'🪙 +25 · ⭐ +10':'');
+  document.getElementById('endReward').innerHTML=won?'🪙 +'+(100+10*opp)+' монет · ⭐ +'+(50+opp)+' XP'+(P&&P.streak>1?'<br>🔥 Серия побед: '+P.streak:''):(P?'🪙 +25 · ⭐ +10':'');
   if(P&&won&&P.streak>1)P.coins+=20*P.streak,saveP();
   document.getElementById('ovEnd').classList.add('show');
   renderGame();
@@ -683,10 +733,11 @@ function renderGame(){
   if(!G)return;
   const view=buildView(currentViewIdx());
   renderFromView(view);
+  startTurnTimer();
 }
 function currentViewIdx(){
+  if(G.mode==='hotseat')return hotViewer;
   if(G.mode==='net')return MYIDX;
-  if(G.mode==='hotseat')return G.turn;
   return G.players.findIndex(p=>!p.bot);
 }
 function buildView(pi){
@@ -706,8 +757,14 @@ function buildView(pi){
 function renderFromView(v){
   if(!v)return;
   const isHot=G&&G.mode==='hotseat';
-  document.getElementById('turnMsg').textContent=v.over?'':(v.yourTurn?'Ваш ход, '+(isHot?G.players[G.turn].name:(P?P.name:'Игрок')):'Ход: '+v.turnName);
-  if(isHot&&!v.yourTurn&&!v.over){const tn=G.players[G.turn].name;if(window.hotShown!==tn){window.hotShown=tn;document.getElementById('hotPassName').textContent='Ход передаётся: '+tn;document.getElementById('ovHotPass').classList.add('show');}}else{window.hotShown=null;}
+  const needPass=isHot&&!v.over&&hotViewer!==G.turn;
+  document.getElementById('turnMsg').textContent=v.over?'':(v.yourTurn?'Ваш ход, '+v.turnName:'Ход: '+v.turnName);
+  if(needPass){
+    if(window.hotShown!==G.turn){window.hotShown=G.turn;document.getElementById('hotPassName').textContent='Ход передаётся: '+v.turnName;document.getElementById('ovHotPass').classList.add('show');}
+  }else{
+    window.hotShown=null;
+    document.getElementById('ovHotPass').classList.remove('show');
+  }
   const or=document.getElementById('oppRow');or.innerHTML='';
   v.players.forEach(p=>{
     const d=document.createElement('div');d.className='opp'+(p.active?' active':'');
@@ -716,37 +773,35 @@ function renderFromView(v){
   document.getElementById('discardWrap').innerHTML=v.discard?'<div style="width:110px">'+svgCard(v.discard)+'</div>':'';
   const dw=document.getElementById('deckWrap');
   dw.innerHTML='<div style="width:110px">'+cardSvg({},true)+'</div>'+(v.pending>0?'<div id="pendingBadge">'+v.pending+'</div>':'');
-  dw.onclick=()=>{if(v.yourTurn&&v.pending>0)doDraw();};
+  dw.onclick=()=>{if(v.yourTurn)doDraw();};
   const hw=document.getElementById('handWrap');hw.innerHTML='';
-  const playable=v.yourTurn&&v.phase!=='drawnDone';
   v.hand.forEach((c,i)=>{
     const d=document.createElement('div');d.className='hcard';
-    const ok=v.yourTurn&&(v.pending>0?c.v===v.pendingType:(c.c==='W'||c.c===v.color||c.v===v.discard.v));
+    const ok=!needPass&&v.yourTurn&&(v.pending>0?c.v===v.pendingType:(c.c==='W'||c.c===v.color||(v.discard&&c.v===v.discard.v)));
     d.innerHTML=svgCard(c);
     if(ok){d.classList.add('playable');d.onclick=()=>doPlay(i);}
     hw.appendChild(d);
   });
   const cn=document.getElementById('colorNow');
   cn.style.background=COLORS[v.color]||'#555';cn.style.color=COLORS[v.color]||'#555';
-  document.getElementById('btnDraw').style.display=(v.yourTurn&&!v.over)?'inline-block':'none';
-  document.getElementById('btnKeep').style.display=(v.yourTurn&&v.phase==='drawn')?'inline-block':'none';
+  const bd=document.getElementById('btnDraw');
+  bd.style.display=(v.yourTurn&&!v.over&&!needPass)?'inline-block':'none';
+  bd.textContent=v.pending>0?'Взять пачку ('+v.pending+')':'Взять карту';
+  document.getElementById('btnKeep').style.display=(v.yourTurn&&!needPass&&v.phase==='drawn')?'inline-block':'none';
   document.getElementById('logMsg').textContent=G?G.log||'':'';
-  if(v.over){
-    // финал показывается через finishGame/broadcastEnd
-  }
   if(v.awaitColor)document.getElementById('ovColor').classList.add('show');
-  else if(v.awaitTarget){
+  else document.getElementById('ovColor').classList.remove('show');
+  if(v.awaitTarget){
     const tl=document.getElementById('targetList');tl.innerHTML='';
+    const myIdx=currentViewIdx();
     v.players.forEach((p,i)=>{
-      const myIdx=v._myi!==undefined?v._myi:G.players.findIndex(q=>!q.bot&&(!q.netId||q.netId==='host'));
       if(i===myIdx)return;
       const b=document.createElement('button');b.className='tbtn';b.textContent=p.name+' ('+p.count+' карт)';
-      b.onclick=()=>{document.getElementById('ovTarget').classList.remove('show');netAction({t:'target',pi:i});chooseTargetLocal(i);};
+      b.onclick=()=>{document.getElementById('ovTarget').classList.remove('show');if(G.mode==='net')netSend({t:'target',pi:i});else chooseTarget(i);};
       tl.appendChild(b);
     });
     document.getElementById('ovTarget').classList.add('show');
-  } else {document.getElementById('ovTarget').classList.remove('show');}
-  if(!v.awaitColor)document.getElementById('ovColor').classList.remove('show');
+  } else document.getElementById('ovTarget').classList.remove('show');
 }
 function doPlay(idx){
   if(G.mode==='net'){netSend({t:'play',idx});return;}
@@ -759,13 +814,13 @@ function doDraw(){
   if(G.mode==='net'){netSend({t:'draw'});return;}
   drawAction(MYIDX_LOCAL());
 }
-function chooseTargetLocal(i){if(G.mode!=='net')chooseTarget(i);}
 document.getElementById('btnDraw').onclick=doDraw;
-document.getElementById('btnKeep').onclick=()=>{if(G.mode==='net'){netSend({t:'pass'});return;}advance();};
+document.getElementById('btnKeep').onclick=()=>{if(G.mode==='net'){netSend({t:'pass'});return;}stopTurnTimer();advance();};
 document.querySelectorAll('#ovColor .cbtn').forEach(b=>b.onclick=()=>{
   document.getElementById('ovColor').classList.remove('show');
   if(G.mode==='net')netSend({t:'color',c:b.dataset.c});else chooseColor(b.dataset.c);
 });
+
 
 /* ========= БОТЫ РЕЖИМ ========= */
 document.getElementById('pmBots').onclick=()=>{
@@ -785,7 +840,7 @@ document.getElementById('hotStart').onclick=()=>{
   newGame('hotseat',names.map(n=>({name:n})));
   show('game');renderGame();
 };
-document.getElementById('hotReady').onclick=()=>{document.getElementById('ovHotPass').classList.remove('show');renderGame();maybeBot();};
+document.getElementById('hotReady').onclick=()=>{document.getElementById('ovHotPass').classList.remove('show');hotViewer=G.turn;renderGame();maybeBot();};
 
 /* ========= СЕТЬ (PeerJS) ========= */
 let PEER=null,CONNS=[],MYIDX=-1,IS_HOST=false,NETCODE='';
